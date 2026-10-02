@@ -200,6 +200,46 @@ fn without_edge_comments(expression: &str) -> &str {
                 }
                 (at + 1).min(bytes.len())
             }
+            // A regex after an operator or an opening, whose body may hold `//` or `/*`.
+            b'/' if start.is_none()
+                || matches!(
+                    bytes[end - 1],
+                    b'(' | b','
+                        | b'='
+                        | b':'
+                        | b'['
+                        | b'!'
+                        | b'&'
+                        | b'|'
+                        | b'?'
+                        | b'{'
+                        | b';'
+                        | b'+'
+                        | b'-'
+                        | b'*'
+                        | b'%'
+                        | b'<'
+                        | b'>'
+                        | b'~'
+                        | b'^'
+                ) =>
+            {
+                let (mut at, mut class) = (index + 1, false);
+                while at < bytes.len() && (class || bytes[at] != b'/') {
+                    match bytes[at] {
+                        b'\\' => at += 1,
+                        b'[' => class = true,
+                        b']' => class = false,
+                        _ => {}
+                    }
+                    at += 1;
+                }
+                at = (at + 1).min(bytes.len());
+                while at < bytes.len() && bytes[at].is_ascii_alphabetic() {
+                    at += 1;
+                }
+                at
+            }
             _ => index + expression[index..].chars().next().map_or(1, char::len_utf8),
         };
         start.get_or_insert(index);
@@ -225,6 +265,10 @@ mod tests {
             ("// c\nComp // d", "Comp"),
             ("a /* x */.b", "a /* x */.b"),
             ("tags['/*'] /* c */", "tags['/*']"),
+            // Bugbot on tsrx-org/oxc#198: a regex body is not a comment.
+            ("(/a\\/*b/.test(x) ? A : B) /* c */", "(/a\\/*b/.test(x) ? A : B)"),
+            ("pick(x, /[//]/g) // c\n", "pick(x, /[//]/g)"),
+            ("a / b / c /* c */", "a / b / c"),
         ] {
             assert_eq!(without_edge_comments(expression), expected, "{expression:?}");
         }
