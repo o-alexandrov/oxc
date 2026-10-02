@@ -2009,6 +2009,33 @@ mod tests {
     }
 
     #[test]
+    fn a_quote_after_an_equals_sign_in_jsx_text_still_dedents() {
+        // JSX text reading `x = "…"` is not an attribute string: once Oxfmt wraps it, the next
+        // line takes the control-flow dedent like any other text line.
+        let source = concat!(
+            "export function View({ ok }: { ok: boolean }) @{\n",
+            "  <main>\n",
+            "    @if (ok) {\n",
+            "      <p>\n",
+            "        Set the option to x = \"some quoted value that is long enough to wrap the line here and more words follow\" then\n",
+            "        continue\n",
+            "      </p>\n",
+            "    }\n",
+            "  </main>\n",
+            "}\n",
+        );
+        let first = format_text(Path::new("Text.tsrx"), source).unwrap();
+        let wrapped = first.code.lines().find(|line| line.contains("words follow")).unwrap();
+        assert!(
+            wrapped.starts_with("        ") && !wrapped.starts_with("         "),
+            "{}",
+            first.code
+        );
+        let second = format_text(Path::new("Text.tsrx"), &first.code).unwrap();
+        assert_eq!(second.code, first.code);
+    }
+
+    #[test]
     fn repeated_dynamic_style_markers_converge_past_single_digit_ordinals() {
         let mut source = String::from("export function View({Tag}:{Tag:string}) @{<main>");
         for _ in 0..32 {

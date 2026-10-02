@@ -9,7 +9,7 @@ pub(super) struct LiftWriter {
     template_interpolations: Vec<usize>,
     line_start: bool,
     previous_byte: Option<u8>,
-    previous_code_byte: Option<u8>,
+    previous_code_bytes: [Option<u8>; 2],
     attribute_string: bool,
 }
 
@@ -22,7 +22,7 @@ impl LiftWriter {
             template_interpolations: Vec::with_capacity(4),
             line_start: true,
             previous_byte: None,
-            previous_code_byte: None,
+            previous_code_bytes: [None; 2],
             attribute_string: false,
         }
     }
@@ -56,9 +56,8 @@ impl LiftWriter {
     fn update_text_state(&mut self, byte: u8, next: Option<u8>) {
         let code = self.state == TextState::Code;
         self.update_state(byte, next);
-        if code && !byte.is_ascii_whitespace() {
-            self.previous_code_byte = Some(byte);
-        }
+        self.previous_code_bytes =
+            if code { [self.previous_code_bytes[1], Some(byte)] } else { [None; 2] };
         if self.state == TextState::Code {
             self.attribute_string = false;
         }
@@ -69,7 +68,11 @@ impl LiftWriter {
             TextState::Code => match byte {
                 b'\'' | b'"' => {
                     self.state = if byte == b'"' { TextState::Double } else { TextState::Single };
-                    self.attribute_string = self.previous_code_byte == Some(b'='); // JSX attribute strings may span lines
+                    // Oxfmt prints an attribute string glued to `name=`; text like `x = "a"` is not one.
+                    self.attribute_string = matches!(
+                        self.previous_code_bytes,
+                        [Some(name), Some(b'=')] if name.is_ascii_alphanumeric() || matches!(name, b'_' | b'$' | b'-' | b':')
+                    );
                 }
                 b'`' => self.state = TextState::Template,
                 b'/' if next == Some(b'/') => self.state = TextState::LineComment,
