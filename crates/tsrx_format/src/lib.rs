@@ -2095,4 +2095,42 @@ mod tests {
         assert_eq!(second.code, first.code);
         assert!(!second.changed);
     }
+
+    #[test]
+    fn case_and_default_expression_containers_stay_containers() {
+        // `@tsrx/core` reads a `{ … }` consequent of an `@case` or `@default` body as a
+        // template expression container and rejects a `;` inside it (TSRX1007). The
+        // formatter printed each one as a block statement, ending the expression with `;`.
+        let source = concat!(
+            "export function Asset(props: Props) @{\n",
+            "  @switch (props.tag) {\n",
+            "    @case 'style': {\n",
+            "      {createElement('style', {\n",
+            "        ...props.attrs,\n",
+            "        dangerouslySetInnerHTML: { __html: props.children ?? '' },\n",
+            "      })}\n",
+            "    }\n",
+            "    @case 'title': { {props.title} }\n",
+            "    @default: {\n",
+            "      <i />\n",
+            "      {props.fallback}\n",
+            "    }\n",
+            "  }\n",
+            "}\n",
+        );
+        for options in [root_options(&json!({})), root_options(&json!({ "semi": false }))] {
+            let first =
+                format_text_with_options(Path::new("Asset.tsrx"), source, Some(&options)).unwrap();
+            assert_eq!(first.metadata.mode, FormatMode::Projected);
+            assert!(first.code.contains("      {createElement(\"style\", {\n"), "{}", first.code);
+            assert!(first.code.contains("\n      })}\n"), "{}", first.code);
+            assert!(first.code.contains("\n      {props.title}\n"), "{}", first.code);
+            assert!(first.code.contains("\n      {props.fallback}\n"), "{}", first.code);
+            assert!(!first.code.contains("_t"), "{}", first.code);
+            let second =
+                format_text_with_options(Path::new("Asset.tsrx"), &first.code, Some(&options))
+                    .unwrap();
+            assert_eq!(second.code, first.code);
+        }
+    }
 }
