@@ -175,21 +175,58 @@ pub(super) fn lift_embedded(
 
 /// The dynamic tag expression without its leading and trailing comments, which stay in the
 /// opening tag only: copied into the closing tag, the next pass moves them into the children.
-fn without_edge_comments(mut expression: &str) -> &str {
-    loop {
-        let trimmed = expression.trim();
-        let next = if let Some(rest) = trimmed.strip_prefix("/*") {
-            rest.find("*/").map(|end| &rest[end + 2..])
-        } else if let Some(rest) = trimmed.strip_prefix("//") {
-            rest.find(['\n', '\r']).map(|end| &rest[end..])
-        } else if let Some(rest) = trimmed.strip_suffix("*/") {
-            rest.rfind("/*").map(|start| &rest[..start])
-        } else {
-            None
+fn without_edge_comments(expression: &str) -> &str {
+    let bytes = expression.as_bytes();
+    let (mut start, mut end) = (None, 0);
+    let mut index = 0;
+    while index < bytes.len() {
+        let next = match bytes[index] {
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index = expression[index..].find(['\n', '\r']).map_or(bytes.len(), |at| index + at);
+                continue;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index = expression[index + 2..].find("*/").map_or(bytes.len(), |at| index + at + 4);
+                continue;
+            }
+            byte if byte.is_ascii_whitespace() => {
+                index += 1;
+                continue;
+            }
+            quote @ (b'\'' | b'"' | b'`') => {
+                let mut at = index + 1;
+                while at < bytes.len() && bytes[at] != quote {
+                    at += if bytes[at] == b'\\' { 2 } else { 1 };
+                }
+                (at + 1).min(bytes.len())
+            }
+            _ => index + expression[index..].chars().next().map_or(1, char::len_utf8),
         };
-        match next {
-            Some(next) if !next.trim().is_empty() => expression = next,
-            _ => return trimmed,
+        start.get_or_insert(index);
+        end = next;
+        index = next;
+    }
+    start.map_or("", |start| &expression[start..end])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_edge_comments;
+
+    #[test]
+    fn edge_comments_come_off_whole_and_inner_text_stays() {
+        // Bugbot on tsrx-org/oxc#198: a `/*` inside a trailing comment cut the closing tag at it,
+        // and a trailing `//` copied into `</{…}>` would comment out the `}>`.
+        for (expression, expected) in [
+            ("Comp /* c */", "Comp"),
+            ("/* c */ Comp", "Comp"),
+            ("Comp /* a /* b */", "Comp"),
+            ("Comp // c\n", "Comp"),
+            ("// c\nComp // d", "Comp"),
+            ("a /* x */.b", "a /* x */.b"),
+            ("tags['/*'] /* c */", "tags['/*']"),
+        ] {
+            assert_eq!(without_edge_comments(expression), expected, "{expression:?}");
         }
     }
 }

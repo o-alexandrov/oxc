@@ -965,6 +965,10 @@ mod tests {
                 "const a = (\n  <{a /* x */.b}>\n    text\n  </{a /* x */.b}>\n);\n",
             ),
             (
+                "const a = <{Comp /* a /* b */}>text</{Comp}>;\n",
+                "const a = (\n  <{Comp /* a /* b */}>\n    text\n  </{Comp}>\n);\n",
+            ),
+            (
                 "const a = <{// c\nComp}>text</{Comp}>;\n",
                 "const a = (\n  <{// c\n      Comp}\n  >\n    text\n  </{Comp}>\n);\n",
             ),
