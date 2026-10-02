@@ -1982,6 +1982,33 @@ mod tests {
     }
 
     #[test]
+    fn multiline_attribute_strings_keep_their_text_inside_control_flow() {
+        let source = concat!(
+            "export function View({ ok }: { ok: boolean }) @{\n",
+            "  <main>\n",
+            "    @if (ok) {\n",
+            "      <b\n",
+            "        title=\"one\n",
+            "          two\"\n",
+            "      />\n",
+            "    }\n",
+            "    @try {\n",
+            "      <b title='three\n",
+            "          four' />\n",
+            "    } @pending {\n",
+            "      <i />\n",
+            "    }\n",
+            "  </main>\n",
+            "}\n",
+        );
+        let first = format_text(Path::new("Attr.tsrx"), source).unwrap();
+        assert!(first.code.contains("\"one\n          two\""), "{}", first.code);
+        assert!(first.code.contains("\"three\n          four\""), "{}", first.code);
+        let second = format_text(Path::new("Attr.tsrx"), &first.code).unwrap();
+        assert_eq!(second.code, first.code);
+    }
+
+    #[test]
     fn repeated_dynamic_style_markers_converge_past_single_digit_ordinals() {
         let mut source = String::from("export function View({Tag}:{Tag:string}) @{<main>");
         for _ in 0..32 {

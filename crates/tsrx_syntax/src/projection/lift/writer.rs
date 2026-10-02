@@ -9,6 +9,8 @@ pub(super) struct LiftWriter {
     template_interpolations: Vec<usize>,
     line_start: bool,
     previous_byte: Option<u8>,
+    previous_code_byte: Option<u8>,
+    attribute_string: bool,
 }
 
 impl LiftWriter {
@@ -20,6 +22,8 @@ impl LiftWriter {
             template_interpolations: Vec::with_capacity(4),
             line_start: true,
             previous_byte: None,
+            previous_code_byte: None,
+            attribute_string: false,
         }
     }
 
@@ -27,7 +31,7 @@ impl LiftWriter {
         let bytes = source.as_bytes();
         let mut index = 0usize;
         while index < bytes.len() {
-            if self.line_start && self.state != TextState::Template {
+            if self.line_start && self.state != TextState::Template && !self.attribute_string {
                 let mut removed = 0usize;
                 while removed < dedent
                     && bytes.get(index).is_some_and(|byte| matches!(byte, b' ' | b'\t'))
@@ -50,10 +54,23 @@ impl LiftWriter {
     }
 
     fn update_text_state(&mut self, byte: u8, next: Option<u8>) {
+        let code = self.state == TextState::Code;
+        self.update_state(byte, next);
+        if code && !byte.is_ascii_whitespace() {
+            self.previous_code_byte = Some(byte);
+        }
+        if self.state == TextState::Code {
+            self.attribute_string = false;
+        }
+    }
+
+    fn update_state(&mut self, byte: u8, next: Option<u8>) {
         match self.state {
             TextState::Code => match byte {
-                b'\'' => self.state = TextState::Single,
-                b'"' => self.state = TextState::Double,
+                b'\'' | b'"' => {
+                    self.state = if byte == b'"' { TextState::Double } else { TextState::Single };
+                    self.attribute_string = self.previous_code_byte == Some(b'='); // JSX attribute strings may span lines
+                }
                 b'`' => self.state = TextState::Template,
                 b'/' if next == Some(b'/') => self.state = TextState::LineComment,
                 b'/' if next == Some(b'*') => self.state = TextState::BlockComment,
