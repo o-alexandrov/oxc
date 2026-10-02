@@ -2133,4 +2133,33 @@ mod tests {
             assert_eq!(second.code, first.code);
         }
     }
+
+    #[test]
+    fn a_comment_before_a_case_body_expression_container_keeps_it_a_container() {
+        // The consequent check looked back only past whitespace, so a comment before the `{`
+        // hid it and the container was printed as a block ending in `;` again.
+        let source = concat!(
+            "export function Asset(props: Props) @{\n",
+            "  @switch (props.tag) {\n",
+            "    @case 'title': {\n",
+            "      /* title */\n",
+            "      {props.title}\n",
+            "    }\n",
+            "    @default: {\n",
+            "      <i />\n",
+            "      // fallback\n",
+            "      {props.fallback}\n",
+            "    }\n",
+            "  }\n",
+            "}\n",
+        );
+        let options = root_options(&json!({}));
+        let first =
+            format_text_with_options(Path::new("Asset.tsrx"), source, Some(&options)).unwrap();
+        assert!(first.code.contains("/* title */\n      {props.title}\n"), "{}", first.code);
+        assert!(first.code.contains("// fallback\n      {props.fallback}\n"), "{}", first.code);
+        let second =
+            format_text_with_options(Path::new("Asset.tsrx"), &first.code, Some(&options)).unwrap();
+        assert_eq!(second.code, first.code);
+    }
 }

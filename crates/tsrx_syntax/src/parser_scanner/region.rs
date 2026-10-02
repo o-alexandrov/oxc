@@ -66,6 +66,7 @@ impl Scanner<'_> {
         let mut pending_parameter_list = false;
         // The offset of a template body `@{` found right after a return type annotation.
         let mut return_type_body = None;
+        let mut token_end = region_start;
 
         while index < self.bytes.len() {
             let byte = self.bytes[index];
@@ -73,6 +74,8 @@ impl Scanner<'_> {
                 index += 1;
                 continue;
             }
+            let comment = byte == b'/' && matches!(self.bytes.get(index + 1), Some(b'/' | b'*'));
+            let previous_token_end = token_end;
 
             let follows_arrow = pending_arrow_body;
             pending_arrow_body = false;
@@ -273,7 +276,12 @@ impl Scanner<'_> {
                     if byte == b'{'
                         && case_body
                         && delimiters.len() == 1
-                        && self.starts_case_consequent(index, region_start, case_markup_end)
+                        && self.starts_case_consequent(
+                            index,
+                            previous_token_end,
+                            region_start,
+                            case_markup_end,
+                        )
                     {
                         open_case_expression = Some(self.case_expressions.len());
                         self.case_expressions.push(ByteSpan::new(to_u32(index)?, to_u32(index)?));
@@ -426,6 +434,9 @@ impl Scanner<'_> {
                     pending_statement_body = false;
                 }
             }
+            if !comment {
+                token_end = index;
+            }
         }
 
         if closing.is_some() {
@@ -440,25 +451,25 @@ impl Scanner<'_> {
     /// Whether the `{` at `index`, directly in an `@case` or `@default` body, begins a
     /// consequent, which `@tsrx/core` reads as a template expression container: it opens the
     /// body, follows a `;`, a `}`, or a markup element, or starts a line after a token that ends
-    /// a statement there by ASI.
+    /// a statement there by ASI. `token_end` is the end of the last token before it, comments
+    /// aside.
     fn starts_case_consequent(
         &self,
         index: usize,
+        token_end: usize,
         region_start: usize,
         markup_end: Option<usize>,
     ) -> bool {
-        let Some(previous) =
-            self.bytes[..index].iter().rposition(|byte| !byte.is_ascii_whitespace())
-        else {
-            return false;
-        };
-        if previous + 1 == region_start
-            || matches!(self.bytes[previous], b';' | b'}')
-            || markup_end == Some(previous + 1)
-        {
+        if token_end == region_start || markup_end == Some(token_end) {
             return true;
         }
-        if !self.bytes[previous + 1..index].iter().any(|byte| matches!(byte, b'\n' | b'\r')) {
+        let Some(previous) = token_end.checked_sub(1) else {
+            return false;
+        };
+        if matches!(self.bytes[previous], b';' | b'}') {
+            return true;
+        }
+        if !self.bytes[token_end..index].iter().any(|byte| matches!(byte, b'\n' | b'\r')) {
             return false;
         }
         match self.bytes[previous] {
