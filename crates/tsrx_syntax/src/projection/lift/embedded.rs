@@ -52,7 +52,7 @@ pub(super) fn lift_embedded(
             output.push_str(&source[copied..cursor]);
             output.push_str("</{");
             let expression = expressions[index];
-            output.push_str(&source[expression.start..expression.end]);
+            output.push_str(without_edge_comments(&source[expression.start..expression.end]));
             output.push_str("}>");
             copied = end;
             cursor = end;
@@ -171,4 +171,25 @@ pub(super) fn lift_embedded(
         return Err(ProjectionError::ScaffoldMismatch { index });
     }
     Ok(output)
+}
+
+/// The dynamic tag expression without its leading and trailing comments, which stay in the
+/// opening tag only: copied into the closing tag, the next pass moves them into the children.
+fn without_edge_comments(mut expression: &str) -> &str {
+    loop {
+        let trimmed = expression.trim();
+        let next = if let Some(rest) = trimmed.strip_prefix("/*") {
+            rest.find("*/").map(|end| &rest[end + 2..])
+        } else if let Some(rest) = trimmed.strip_prefix("//") {
+            rest.find(['\n', '\r']).map(|end| &rest[end..])
+        } else if let Some(rest) = trimmed.strip_suffix("*/") {
+            rest.rfind("/*").map(|start| &rest[..start])
+        } else {
+            None
+        };
+        match next {
+            Some(next) if !next.trim().is_empty() => expression = next,
+            _ => return trimmed,
+        }
+    }
 }
