@@ -1,4 +1,4 @@
-use crate::diagnostics::ProjectionError;
+use crate::{diagnostics::ProjectionError, model::ByteSpan};
 
 use super::text::TextState;
 
@@ -9,14 +9,14 @@ pub(super) struct LiftWriter {
     template_interpolations: Vec<usize>,
     line_start: bool,
     previous_byte: Option<u8>,
-    previous_code_bytes: [Option<u8>; 2],
-    attribute_string: bool,
-    /// Brace depth inside each open JSX tag (`<name` up to its `>`); text between tags is not here.
-    jsx_tags: Vec<usize>,
+    /// Multi-line quoted JSX attribute values in the formatted text, as the scanner found them.
+    /// Oxfmt prints these verbatim, so their continuation lines keep their indent.
+    attribute_strings: Vec<ByteSpan>,
+    next_attribute_string: usize,
 }
 
 impl LiftWriter {
-    pub(super) fn new(capacity: usize) -> Self {
+    pub(super) fn new(capacity: usize, attribute_strings: Vec<ByteSpan>) -> Self {
         Self {
             output: Vec::with_capacity(capacity),
             state: TextState::Code,
@@ -24,17 +24,22 @@ impl LiftWriter {
             template_interpolations: Vec::with_capacity(4),
             line_start: true,
             previous_byte: None,
-            previous_code_bytes: [None; 2],
-            attribute_string: false,
-            jsx_tags: Vec::new(),
+            attribute_strings,
+            next_attribute_string: 0,
         }
     }
 
-    pub(super) fn write(&mut self, source: &str, dedent: usize) {
+    /// Writes `source`, dropping up to `dedent` columns of indent from each line it starts.
+    /// `origin` is the offset of `source` in the formatted text, or `None` for scaffold
+    /// replacements, which never sit inside an attribute string.
+    pub(super) fn write(&mut self, source: &str, origin: Option<usize>, dedent: usize) {
         let bytes = source.as_bytes();
         let mut index = 0usize;
         while index < bytes.len() {
-            if self.line_start && self.state != TextState::Template && !self.attribute_string {
+            if self.line_start
+                && self.state != TextState::Template
+                && !origin.is_some_and(|origin| self.inside_attribute_string(origin + index))
+            {
                 let mut removed = 0usize;
                 while removed < dedent
                     && bytes.get(index).is_some_and(|byte| matches!(byte, b' ' | b'\t'))
@@ -56,46 +61,30 @@ impl LiftWriter {
         }
     }
 
-    fn update_text_state(&mut self, byte: u8, next: Option<u8>) {
-        let code = self.state == TextState::Code;
-        self.update_state(byte, next);
-        self.previous_code_bytes =
-            if code { [self.previous_code_bytes[1], Some(byte)] } else { [None; 2] };
-        if self.state == TextState::Code {
-            self.attribute_string = false;
+    /// Whether `position`, the first byte of a line, continues a multi-line attribute string.
+    /// Lines are visited in increasing order, so the cursor only moves forward.
+    fn inside_attribute_string(&mut self, position: usize) -> bool {
+        while self
+            .attribute_strings
+            .get(self.next_attribute_string)
+            .is_some_and(|span| span.end as usize <= position)
+        {
+            self.next_attribute_string += 1;
         }
+        self.attribute_strings
+            .get(self.next_attribute_string)
+            .is_some_and(|span| (span.start as usize) < position)
     }
 
-    fn update_state(&mut self, byte: u8, next: Option<u8>) {
+    fn update_text_state(&mut self, byte: u8, next: Option<u8>) {
         match self.state {
             TextState::Code => match byte {
-                b'\'' | b'"' => {
-                    self.state = if byte == b'"' { TextState::Double } else { TextState::Single };
-                    // Oxfmt prints an attribute string glued to `name=` inside a tag; JSX text like
-                    // `x = "a"` or `x="a"` is not one.
-                    self.attribute_string = self.jsx_tags.last() == Some(&0)
-                        && matches!(
-                            self.previous_code_bytes,
-                            [Some(name), Some(b'=')] if name.is_ascii_alphanumeric() || matches!(name, b'_' | b'$' | b'-' | b':')
-                        );
-                }
+                b'\'' => self.state = TextState::Single,
+                b'"' => self.state = TextState::Double,
                 b'`' => self.state = TextState::Template,
                 b'/' if next == Some(b'/') => self.state = TextState::LineComment,
                 b'/' if next == Some(b'*') => self.state = TextState::BlockComment,
-                b'<' if next.is_some_and(|next| next.is_ascii_alphabetic())
-                    && !self.previous_code_bytes[1].is_some_and(|previous| {
-                        previous.is_ascii_alphanumeric() || matches!(previous, b'_' | b'$')
-                    }) =>
-                {
-                    self.jsx_tags.push(0);
-                }
-                b'>' if self.jsx_tags.last() == Some(&0) => {
-                    self.jsx_tags.pop();
-                }
                 b'{' => {
-                    if let Some(depth) = self.jsx_tags.last_mut() {
-                        *depth += 1;
-                    }
                     if let Some(depth) = self.template_interpolations.last_mut() {
                         if *depth == usize::MAX {
                             *depth = 0;
@@ -105,9 +94,6 @@ impl LiftWriter {
                     }
                 }
                 b'}' => {
-                    if let Some(depth) = self.jsx_tags.last_mut() {
-                        *depth = depth.saturating_sub(1);
-                    }
                     if let Some(depth) = self.template_interpolations.last_mut() {
                         if *depth == 0 {
                             self.template_interpolations.pop();

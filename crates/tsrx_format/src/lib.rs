@@ -2009,6 +2009,64 @@ mod tests {
     }
 
     #[test]
+    fn multiline_attribute_strings_on_generic_elements_keep_their_text_inside_control_flow() {
+        // The `>` closing the type arguments, and the `=>` inside them, do not end the tag.
+        let source = concat!(
+            "export function View({ ok }: { ok: boolean }) @{\n",
+            "  <main>\n",
+            "    @if (ok) {\n",
+            "      <List<string>\n",
+            "        title=\"one\n",
+            "          two\"\n",
+            "      />\n",
+            "      <Run<() => void>\n",
+            "        label=\"three\n",
+            "          four\"\n",
+            "      />\n",
+            "    }\n",
+            "  </main>\n",
+            "}\n",
+        );
+        let first = format_text(Path::new("Generic.tsrx"), source).unwrap();
+        assert!(first.code.contains("\"one\n          two\""), "{}", first.code);
+        assert!(first.code.contains("\"three\n          four\""), "{}", first.code);
+        let second = format_text(Path::new("Generic.tsrx"), &first.code).unwrap();
+        assert_eq!(second.code, first.code);
+    }
+
+    #[test]
+    fn a_less_than_then_name_equals_quote_in_jsx_text_still_dedents() {
+        // Text cannot hold a raw `<`, so `a <b c="x` reaches the formatter as `{"<"}` or `&lt;`.
+        // Neither opens a tag, so the wrapped `c="…` line is text and takes the dedent.
+        for less_than in ["{\"<\"}", "&lt;"] {
+            let source = format!(
+                concat!(
+                    "export function View({{ ok }}: {{ ok: boolean }}) @{{\n",
+                    "  <main>\n",
+                    "    @if (ok) {{\n",
+                    "      <p>\n",
+                    "        a {}b c=\"x some quoted value that is long enough to wrap the line here and more words follow\" then\n",
+                    "        continue\n",
+                    "      </p>\n",
+                    "    }}\n",
+                    "  </main>\n",
+                    "}}\n",
+                ),
+                less_than
+            );
+            let first = format_text(Path::new("Text.tsrx"), &source).unwrap();
+            let wrapped = first.code.lines().find(|line| line.contains("words follow")).unwrap();
+            assert!(
+                wrapped.starts_with("        ") && !wrapped.starts_with("         "),
+                "{}",
+                first.code
+            );
+            let second = format_text(Path::new("Text.tsrx"), &first.code).unwrap();
+            assert_eq!(second.code, first.code);
+        }
+    }
+
+    #[test]
     fn a_quote_after_an_equals_sign_in_jsx_text_still_dedents() {
         // JSX text reading `x = "…"` is not an attribute string: once Oxfmt wraps it, the next
         // line takes the control-flow dedent like any other text line.
