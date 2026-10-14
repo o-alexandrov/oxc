@@ -2162,4 +2162,59 @@ mod tests {
             format_text_with_options(Path::new("Asset.tsrx"), &first.code, Some(&options)).unwrap();
         assert_eq!(second.code, first.code);
     }
+
+    #[test]
+    fn line_and_block_comments_before_case_body_expression_containers_keep_them_containers() {
+        // Each position that starts a consequent (the body opening, a `;`, a `}`, a markup
+        // element), followed by a line or block comment on the same line and then the `{`.
+        let source = concat!(
+            "export function Asset(props: Props) @{\n",
+            "  @switch (props.tag) {\n",
+            "    @case 'a': { // open line\n",
+            "      {props.a}\n",
+            "    }\n",
+            "    @case 'b': { /* open block */ {props.b} }\n",
+            "    @case 'c': {\n",
+            "      const cc = props.c; /* after semi */ {cc}\n",
+            "    }\n",
+            "    @case 'd': {\n",
+            "      const dd = props.d; // after semi\n",
+            "      {dd}\n",
+            "    }\n",
+            "    @case 'e': {\n",
+            "      if (props.e) { log(); } /* after brace */ {props.e}\n",
+            "    }\n",
+            "    @default: {\n",
+            "      <i /> /* after markup */ {props.fallback}\n",
+            "      <b /> // after markup\n",
+            "      {props.other}\n",
+            "    }\n",
+            "  }\n",
+            "}\n",
+        );
+        for options in [root_options(&json!({})), root_options(&json!({ "semi": false }))] {
+            let first =
+                format_text_with_options(Path::new("Asset.tsrx"), source, Some(&options)).unwrap();
+            assert_eq!(first.metadata.mode, FormatMode::Projected);
+            for expression in
+                ["props.a", "props.b", "cc", "dd", "props.e", "props.fallback", "props.other"]
+            {
+                assert!(
+                    first.code.contains(&format!("{{{expression}}}")),
+                    "{expression}: {}",
+                    first.code
+                );
+                assert!(
+                    !first.code.contains(&format!("{expression};")),
+                    "{expression}: {}",
+                    first.code
+                );
+            }
+            assert!(!first.code.contains("_t"), "{}", first.code);
+            let second =
+                format_text_with_options(Path::new("Asset.tsrx"), &first.code, Some(&options))
+                    .unwrap();
+            assert_eq!(second.code, first.code);
+        }
+    }
 }
