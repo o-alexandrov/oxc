@@ -972,6 +972,38 @@ mod tests {
                 "const a = <{// c\nComp}>text</{Comp}>;\n",
                 "const a = (\n  <{// c\n      Comp}\n  >\n    text\n  </{Comp}>\n);\n",
             ),
+            (
+                "const a = <{Comp // c\n}>text</{Comp}>;\n",
+                "const a = (\n  <{Comp // c\n    }\n  >\n    text\n  </{Comp}>\n);\n",
+            ),
+            (
+                "const a = <{Comp /* a /* b */ /* c */}>text</{Comp}>;\n",
+                "const a = (\n  <{Comp /* a /* b */ /* c */}>\n    text\n  </{Comp}>\n);\n",
+            ),
+        ] {
+            let first = format_text(Path::new("App.tsrx"), source).unwrap();
+            assert_eq!(first.code, expected);
+            assert_eq!(format_text(Path::new("App.tsrx"), &first.code).unwrap().code, expected);
+        }
+    }
+
+    #[test]
+    fn comment_markers_inside_a_dynamic_tag_expression_are_not_comments() {
+        // Bugbot on tsrx-org/oxc#198: a `//` or `/*` in a regex, string, or template literal was
+        // read as a comment, which cut the expression written into the closing tag.
+        for (source, expected) in [
+            (
+                "const a = <{pick(typeof /\\//) /* c */}>text</{pick(typeof /\\//)}>;\n",
+                "const a = (\n  <{pick(typeof /\\//) /* c */}>\n    text\n  </{pick(typeof /\\//)}>\n);\n",
+            ),
+            (
+                "const a = <{tags[\"//\"] // c\n}>text</{tags[\"//\"]}>;\n",
+                "const a = (\n  <{tags[\"//\"] // c\n    }\n  >\n    text\n  </{tags[\"//\"]}>\n);\n",
+            ),
+            (
+                "const a = <{tags[`${\"`\"}/*`] /* c */}>text</{tags[`${\"`\"}/*`]}>;\n",
+                "const a = (\n  <{tags[`${\"`\"}/*`] /* c */}>\n    text\n  </{tags[`${\"`\"}/*`]}>\n);\n",
+            ),
         ] {
             let first = format_text(Path::new("App.tsrx"), source).unwrap();
             assert_eq!(first.code, expected);
