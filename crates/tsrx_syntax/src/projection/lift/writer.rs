@@ -11,6 +11,8 @@ pub(super) struct LiftWriter {
     previous_byte: Option<u8>,
     previous_code_bytes: [Option<u8>; 2],
     attribute_string: bool,
+    /// Brace depth inside each open JSX tag (`<name` up to its `>`); text between tags is not here.
+    jsx_tags: Vec<usize>,
 }
 
 impl LiftWriter {
@@ -24,6 +26,7 @@ impl LiftWriter {
             previous_byte: None,
             previous_code_bytes: [None; 2],
             attribute_string: false,
+            jsx_tags: Vec::new(),
         }
     }
 
@@ -68,16 +71,31 @@ impl LiftWriter {
             TextState::Code => match byte {
                 b'\'' | b'"' => {
                     self.state = if byte == b'"' { TextState::Double } else { TextState::Single };
-                    // Oxfmt prints an attribute string glued to `name=`; text like `x = "a"` is not one.
-                    self.attribute_string = matches!(
-                        self.previous_code_bytes,
-                        [Some(name), Some(b'=')] if name.is_ascii_alphanumeric() || matches!(name, b'_' | b'$' | b'-' | b':')
-                    );
+                    // Oxfmt prints an attribute string glued to `name=` inside a tag; JSX text like
+                    // `x = "a"` or `x="a"` is not one.
+                    self.attribute_string = self.jsx_tags.last() == Some(&0)
+                        && matches!(
+                            self.previous_code_bytes,
+                            [Some(name), Some(b'=')] if name.is_ascii_alphanumeric() || matches!(name, b'_' | b'$' | b'-' | b':')
+                        );
                 }
                 b'`' => self.state = TextState::Template,
                 b'/' if next == Some(b'/') => self.state = TextState::LineComment,
                 b'/' if next == Some(b'*') => self.state = TextState::BlockComment,
+                b'<' if next.is_some_and(|next| next.is_ascii_alphabetic())
+                    && !self.previous_code_bytes[1].is_some_and(|previous| {
+                        previous.is_ascii_alphanumeric() || matches!(previous, b'_' | b'$')
+                    }) =>
+                {
+                    self.jsx_tags.push(0);
+                }
+                b'>' if self.jsx_tags.last() == Some(&0) => {
+                    self.jsx_tags.pop();
+                }
                 b'{' => {
+                    if let Some(depth) = self.jsx_tags.last_mut() {
+                        *depth += 1;
+                    }
                     if let Some(depth) = self.template_interpolations.last_mut() {
                         if *depth == usize::MAX {
                             *depth = 0;
@@ -87,6 +105,9 @@ impl LiftWriter {
                     }
                 }
                 b'}' => {
+                    if let Some(depth) = self.jsx_tags.last_mut() {
+                        *depth = depth.saturating_sub(1);
+                    }
                     if let Some(depth) = self.template_interpolations.last_mut() {
                         if *depth == 0 {
                             self.template_interpolations.pop();
